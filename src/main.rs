@@ -1,123 +1,80 @@
-use core::panic;
-use std::{collections::HashSet, rc::Rc};
+use std::collections::HashMap;
 
 type Timestamp = i32;
+type Interval = i32;
 type CustomerId = i32;
 
 mod search {
-    use crate::{CustomerId, RoundTrip, UndergroundSystem};
-
-    pub fn trips_by_customer_id(
-        usys: &mut UndergroundSystem,
-        customer_id: CustomerId,
-    ) -> &mut RoundTrip {
-        usys.trips
-            .iter_mut()
-            .find(|t| t.customer_id == customer_id)
-            .expect("can't check out if no checking...")
-    }
+    use crate::{Trip, UndergroundSystem};
 
     pub fn trips_by_stations(
         usys: &UndergroundSystem,
         start_station: String,
         end_station: String,
-    ) -> Vec<&RoundTrip> {
+    ) -> Vec<&Trip> {
         usys.trips
             .iter()
-            .filter(|t| {
-                t.departure.station_name == start_station
-                    && t.return_trip.is_some()
-                    && t.returns_to_station(end_station.clone())
-            })
+            .filter(|t| t.start_station == start_station && t.end_station == end_station)
             .collect()
     }
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]
-struct Check {
+pub struct Check {
     station_name: String,
     t: Timestamp,
 }
 
 impl Check {
-    fn new(station_name: String, t: Timestamp) -> Rc<Self> {
-        let c = Check { station_name, t };
-
-        Rc::new(c)
+    fn new(station_name: String, t: Timestamp) -> Self {
+        Check { station_name, t }
     }
 }
 
 #[derive(Debug)]
-pub struct RoundTrip {
-    customer_id: CustomerId,
-    departure: Rc<Check>,
-    return_trip: Option<Rc<Check>>,
+pub struct Trip {
+    travel_time: Interval,
+    start_station: String,
+    end_station: String,
 }
 
-impl RoundTrip {
-    fn new(
-        customer_id: CustomerId,
-        departure: Rc<Check>,
-        return_trip: Option<Rc<Check>>,
-    ) -> RoundTrip {
-        RoundTrip {
-            customer_id,
-            departure: Rc::from(departure),
-            return_trip,
-        }
-    }
-
-    fn set_return(&mut self, return_trip: Rc<Check>) {
-        self.return_trip = Some(return_trip);
-    }
-
-    fn returns_to_station(&self, station_name: String) -> bool {
-        if let Some(check) = &self.return_trip {
-            return check.station_name == station_name;
-        } else {
-            return false;
-        }
-    }
-
-    fn trip_time(&self) -> i32 {
-        if let Some(check) = &self.return_trip {
-            return check.t - self.departure.t;
-        } else {
-            panic!("trip is not completed");
+impl Trip {
+    fn new(travel_time: Interval, start_station: String, end_station: String) -> Trip {
+        Trip {
+            travel_time,
+            start_station,
+            end_station,
         }
     }
 }
 
 pub struct UndergroundSystem {
-    trips: Vec<RoundTrip>,
-    ins: HashSet<Rc<Check>>,
+    ins: HashMap<CustomerId, Check>,
+    trips: Vec<Trip>,
 }
 
 impl UndergroundSystem {
     fn new() -> Self {
         let trips = vec![];
-        let ins = HashSet::new();
+        let ins = HashMap::new();
         UndergroundSystem { trips, ins }
     }
 
     fn check_in(&mut self, id: CustomerId, station_name: String, t: Timestamp) {
         let check_in = Check::new(station_name, t);
 
-        if self.ins.contains(&check_in) {
-            panic!("same checkin {check_in:#?}");
+        if self.ins.contains_key(&id) {
+            return;
         }
 
-        let round_trip = RoundTrip::new(id, Rc::clone(&check_in), None);
-        self.trips.push(round_trip);
-
-        self.ins.insert(check_in);
+        self.ins.insert(id, check_in);
     }
 
-    fn check_out(&mut self, id: i32, station_name: String, t: i32) {
-        let trip = search::trips_by_customer_id(self, id);
+    fn check_out(&mut self, id: CustomerId, station_name: String, t: i32) {
+        let check_in = self.ins.remove(&id).expect("check_in not found");
 
-        let check_out = Check::new(station_name, t);
-        trip.set_return(check_out)
+        let trip = Trip::new(t - check_in.t, check_in.station_name.clone(), station_name);
+        self.trips.push(trip);
     }
 
     fn get_average_time(&self, start_station: String, end_station: String) -> f64 {
@@ -125,7 +82,7 @@ impl UndergroundSystem {
 
         let total_trip_time = trips
             .iter()
-            .fold(0, |total_trip_time, t| total_trip_time + t.trip_time());
+            .fold(0, |total_trip_time, t| total_trip_time + t.travel_time);
 
         let total_trips = trips.iter().count() as f64;
         total_trip_time as f64 / total_trips
